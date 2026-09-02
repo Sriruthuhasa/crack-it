@@ -160,6 +160,8 @@ textarea{line-height:1.55;min-height:120px}
 .chip{font-size:12px;font-weight:600;padding:5px 12px;border-radius:20px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);cursor:pointer}
 .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .menu-btn{display:none}
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;display:none}
+.scrim.on{display:block}
 @media(max-width:900px){.app{grid-template-columns:1fr}.nav{position:fixed;left:0;top:0;z-index:60;transform:translateX(-100%);transition:transform .25s;width:250px;box-shadow:var(--shadow-lg)}.nav.open{transform:none}.menu-btn{display:grid}.dash{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.two{grid-template-columns:1fr}.channels{display:none}.scrim{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;display:none}.scrim.on{display:block}}
 @media(max-width:560px){.stats{grid-template-columns:1fr 1fr}.view{padding:18px 14px 50px}.topbar{padding:10px 14px}.job{grid-template-columns:auto 1fr auto}}
 </style>
