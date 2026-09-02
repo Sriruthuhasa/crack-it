@@ -185,7 +185,7 @@ textarea{line-height:1.55;min-height:120px}
       <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input type="text" placeholder="Filter live roles — title, company, location…" id="globalsearch"></div>
       <div class="channels"><span class="chan"><span class="dot"></span>Web</span><span class="chan">Chrome</span><span class="chan">CLI · MCP</span><span class="chan">Mobile</span></div>
       <button class="iconbtn" id="theme" aria-label="Toggle theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
-      <div class="avatar" title="You">SK</div>
+      <div class="avatar" id="avatar" title="You">SK</div>
     </header>
     <div id="view" class="view"></div>
   </main>
@@ -207,8 +207,10 @@ const BOARDS=[
   {p:"ashby",token:"openai",co:"OpenAI",color:"#111111"},
   {p:"ashby",token:"linear",co:"Linear",color:"#5E6AD2"},
   {p:"ashby",token:"vercel",co:"Vercel",color:"#111111"},
+  {p:"remotive",token:"remotive",co:"Remotive",color:"#1FA67A"}, // remote board incl. contract/freelance roles
   // Lever drops in the same way — e.g. {p:"lever",token:"someco",co:"SomeCo",color:"#333"}
 ];
+function hashColor(s){let h=0;for(let i=0;i<(s||"").length;i++)h=(h*31+s.charCodeAt(i))>>>0;return "hsl("+(h%360)+" 52% 46%)";}
 const MAX_PER_BOARD=40;
 
 async function fetchBoard(b){
@@ -227,6 +229,14 @@ async function fetchBoard(b){
         id:j.id,role:j.title,url:j.jobUrl||j.applyUrl,loc:j.location||"",
         dept:j.department||j.team||"",updated:j.publishedAt,remote:j.isRemote,type:j.employmentType}));
     }
+    if(b.p==="remotive"){
+      const r=await fetch("https://remotive.com/api/remote-jobs?limit=140");
+      if(!r.ok)throw 0;const d=await r.json();
+      return (d.jobs||[]).slice(0,140).map(j=>{const co=j.company_name||"Remote";
+        return norm({p:"remotive",token:"remotive",co:co,color:hashColor(co)},{
+          id:j.id,role:j.title,url:j.url,loc:j.candidate_required_location||"Remote",
+          dept:j.category||"",updated:j.publication_date,type:(j.job_type||"").replace(/_/g," "),remote:true});});
+    }
     if(b.p==="lever"){
       const r=await fetch(`https://api.lever.co/v0/postings/${b.token}?mode=json`);
       if(!r.ok)throw 0;const d=await r.json();
@@ -240,24 +250,36 @@ async function fetchBoard(b){
 function norm(b,j){
   const upd=j.updated?new Date(j.updated).getTime():Date.now();
   const remote=j.remote||/remote/i.test(j.loc||"");
+  const blob=((j.role||"")+" "+(j.type||"")+" "+(j.dept||"")).toLowerCase();
+  const c2c=/c2c|corp.?to.?corp|corp2corp/.test(blob);
+  const contract=c2c||/contract|contractor|temporary|\btemp\b|\b1099\b|fixed.?term|freelance/.test(blob);
   return {id:b.p+"_"+b.token+"_"+j.id,co:b.co,color:b.color,role:j.role||"Role",
     loc:j.loc||(remote?"Remote":"—"),dept:j.dept||"",url:j.url||"#",ats:b.p,
-    type:j.type||(remote?"Remote":""),updated:upd,remote:remote,match:0};
+    type:j.type||(remote?"Remote":""),updated:upd,remote:remote,contract:contract,c2c:c2c,match:0};
 }
 function ageMins(t){return Math.max(0,Math.round((Date.now()-t)/60000));}
 function ageLabel(t){const m=ageMins(t);if(m<60)return m+"m ago";const h=Math.round(m/60);if(h<24)return h+"h ago";const d=Math.round(h/24);return d+"d ago";}
 
 /* ================= STATE ================= */
 const KEY="crackit.live.v1";
+const DEFAULT_RESUME="Senior Machine Learning Engineer, 7 years. Python, LLM fine-tuning, RAG, vector databases, AWS, Kubernetes, Docker, MLOps, PyTorch, distributed training, evaluation, prompt engineering, SQL, data pipelines.";
+function DEFAULT_ME(){return {name:"Sri Komma",headline:"Senior AI/ML Engineer",email:"",phone:"",location:"Remote (US)",
+  links:{linkedin:"",github:"",portfolio:""},workAuth:"Authorized to work in the US",
+  empTypes:{w2ft:true,w2c:true,c2c:true},locsPref:"Remote, San Francisco, New York",minSalary:"160",
+  targets:"AI ML LLM machine learning engineer data platform",provider:"Gmail"};}
 let S=load();let JOBS=[];let LOADED=false;
-function load(){try{const r=JSON.parse(localStorage.getItem(KEY));if(r&&r.pipeline)return r;}catch(e){}
-  return {profile:"Senior Machine Learning Engineer, 7 years. Python, LLM fine-tuning, RAG, vector databases, AWS, Kubernetes, Docker, MLOps, PyTorch, distributed training, evaluation, prompt engineering, SQL, data pipelines.",
-    pipeline:[]};}
+function load(){let r=null;try{r=JSON.parse(localStorage.getItem(KEY))}catch(e){}
+  if(!r||!r.pipeline)r={profile:DEFAULT_RESUME,pipeline:[]};
+  if(!r.me)r.me=DEFAULT_ME();
+  return r;}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
 function profileKw(){
   const stop=new Set("the a an and or to of in on for with years year experience".split(" "));
-  return [...new Set((S.profile||"").toLowerCase().replace(/[^a-z0-9+ ]/g," ").split(/\s+/).filter(w=>w.length>2&&!stop.has(w)))];
+  const src=((S.profile||"")+" "+((S.me&&S.me.targets)||"")+" "+((S.me&&S.me.headline)||"")).toLowerCase();
+  return [...new Set(src.replace(/[^a-z0-9+ ]/g," ").split(/\s+/).filter(w=>w.length>2&&!stop.has(w)))];
 }
+function updateAvatar(){const av=document.getElementById('avatar');if(av){const n=((S.me&&S.me.name)||"").trim();av.textContent=n?n.split(/\s+/).map(x=>x[0]).slice(0,2).join("").toUpperCase().slice(0,2):"YOU";}}
+function openMail(to,subject,body){location.href="mailto:"+encodeURIComponent(to||"")+"?subject="+encodeURIComponent(subject||"")+"&body="+encodeURIComponent(body||"");}
 function scoreJob(j,kw){
   const hay=(j.role+" "+j.dept+" "+j.loc).toLowerCase();
   let hits=0;kw.forEach(k=>{if(hay.includes(k))hits++;});
@@ -307,6 +329,7 @@ function toast(t,b,cls){const el=document.createElement("div");el.className="toa
 /* ================= NAV ================= */
 const NAV=[
   ["dashboard","Dashboard",'<path d="M3 13h8V3H3zM13 21h8V3h-8zM3 21h8v-6H3z"/>'],
+  ["profile","Profile",'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'],
   ["radar","Job Radar",'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/>',"live"],
   ["resume","Resume Studio",'<path d="M6 2h9l4 4v16H6z"/><path d="M14 2v5h5M9 13h6M9 17h6"/>'],
   ["cover","Cover Letters",'<path d="M3 5h18v14H3z"/><path d="m3 6 9 7 9-7"/>'],
@@ -324,7 +347,7 @@ V.dashboard=()=>{
   const fresh=JOBS.filter(j=>ageMins(j.updated)<1440).length;
   return `<div class="page-head"><div class="eyebrow">Mission control</div>
     <h1>${LOADED?`${JOBS.length} real roles on your radar right now`:"Pulling live roles from company career pages…"}</h1>
-    <p>Crack It is reading <b>official ATS job APIs</b> (Greenhouse · Ashby) live in your browser — no scraping, no middleman. Ranked against your profile.</p></div>
+    <p>Crack It is reading <b>official ATS job APIs</b> (Greenhouse · Ashby · Remotive) live in your browser — no scraping, no middleman. Ranked against your profile.</p></div>
   <div class="stats">
     <div class="stat"><div class="k">Live matches</div><div class="v">${LOADED?JOBS.length:"…"}</div><div class="d">${[...new Set(JOBS.map(j=>j.co))].length} companies</div>${sparkline([6,9,7,12,11,15,JOBS.length||18],"var(--accent)")}</div>
     <div class="stat"><div class="k">90%+ fit</div><div class="v">${JOBS.filter(j=>j.match>=90).length}</div><div class="d">top-ranked for you</div>${sparkline([2,3,4,5,4,6,JOBS.filter(j=>j.match>=90).length||5],"var(--teal)")}</div>
@@ -352,7 +375,7 @@ function jobRow(j){
   const fresh=ageMins(j.updated)<1440;
   return `<div class="job">${logo(j.co,j.color)}
     <div><div class="t">${esc(j.role)}</div>
-      <div class="m"><b>${esc(j.co)}</b>${j.loc?" · "+esc(j.loc):""}${j.dept?` <span class="tag">${esc(j.dept)}</span>`:""}${j.type?` <span class="tag">${esc(j.type)}</span>`:""}
+      <div class="m"><b>${esc(j.co)}</b>${j.loc?" · "+esc(j.loc):""}${j.dept?` <span class="tag">${esc(j.dept)}</span>`:""}${j.type?` <span class="tag">${esc(j.type)}</span>`:""}${j.contract?` <span class="pill accent" style="font-size:10px">${j.c2c?'C2C':'Contract'}</span>`:""}
         <span>· via ${j.ats}</span> · <span class="${fresh?'fresh':'muted'}">${ageLabel(j.updated)}</span></div></div>
     ${ring(j.match)}
     <a class="btn pri sm" href="${esc(j.url)}" target="_blank" rel="noopener" onclick='trackApply(${JSON.stringify(j.id).replace(/'/g,"&#39;")})'>Apply →</a></div>`;
@@ -366,10 +389,11 @@ window.trackApply=id=>{const j=jobById(id);if(!j)return;
 let RADFILTER="all",RADSEARCH="";
 V.radar=()=>{
   return `<div class="page-head"><div class="eyebrow">Discovery · Find · LIVE</div><h1>Job Radar</h1>
-    <p>Real, current openings pulled straight from company ATS APIs (Greenhouse · Ashby) and ranked against your profile. Add more companies in one line of config.</p></div>
+    <p>Real, current openings pulled straight from company ATS APIs (Greenhouse · Ashby · Remotive) and ranked against your profile. Add more companies in one line of config.</p></div>
   <div class="card pad" style="margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-    <div class="chips">${[["all","All"],["ai","AI / ML"],["remote","Remote"],["eng","Engineering"],["90","90%+ match"],["fresh","Fresh < 24h"]].map(([k,l])=>`<button class="chip ${RADFILTER===k?'on':''}" onclick="setFilter('${k}')">${l}</button>`).join("")}</div>
+    <div class="chips">${[["all","All"],["ai","AI / ML"],["remote","Remote"],["eng","Engineering"],["contract","C2C / Contract"],["90","90%+ match"],["fresh","Fresh < 24h"]].map(([k,l])=>`<button class="chip ${RADFILTER===k?'on':''}" onclick="setFilter('${k}')">${l}</button>`).join("")}</div>
     <span class="demo-note" style="margin-left:auto">${icon('<path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/>')} <a href="#" onclick="reloadJobs(event)" style="color:var(--accent-ink)">refresh</a></span></div>
+  ${RADFILTER==='contract'?`<div class="card pad" style="margin-bottom:16px;border-left:3px solid var(--accent)"><b style="font-size:13.5px">About C2C / contract roles</b><div class="tiny muted" style="margin-top:5px">These are contract-flagged roles detected in the live ATS feeds (direct employers, so most are W2). A true C2C firehose like GiraffyReach's is a proprietary source with no public API — genuine corp-to-corp requirements come from contract boards (e.g. Dice) via a paid/authorized integration. Your C2C preference is set in <a href="#" onclick="go('profile');return false">Profile</a>, and this is where a Dice-style source would plug in.</div></div>`:''}
   <div class="card"><div class="feed" id="radarfeed">${LOADED?renderRadar():skel(8)}</div></div>`;
 };
 function renderRadar(){
@@ -377,6 +401,7 @@ function renderRadar(){
   if(RADFILTER==="ai")list=list.filter(j=>/\b(ai|ml|machine learning|llm|data|scien|research|model)\b/i.test(j.role+" "+j.dept));
   else if(RADFILTER==="remote")list=list.filter(j=>j.remote||/remote/i.test(j.loc));
   else if(RADFILTER==="eng")list=list.filter(j=>/engineer|developer|software|platform|infrastructure|backend|frontend|full.?stack/i.test(j.role+" "+j.dept));
+  else if(RADFILTER==="contract")list=list.filter(j=>j.contract);
   else if(RADFILTER==="90")list=list.filter(j=>j.match>=90);
   else if(RADFILTER==="fresh")list=list.filter(j=>ageMins(j.updated)<1440);
   if(RADSEARCH){const q=RADSEARCH.toLowerCase();list=list.filter(j=>(j.role+" "+j.co+" "+j.loc+" "+j.dept).toLowerCase().includes(q));}
@@ -444,19 +469,45 @@ V.apply=()=>{
   </div>`;
 };
 
-V.outreach=()=>`<div class="page-head"><div class="eyebrow">Backchannel</div><h1>Recruiter Outreach</h1>
-  <p>The real build sends from your Gmail via OAuth and tracks opens with a pixel + link redirects. Shown here as a preview of the flow.</p></div>
-  <div class="two"><div class="card pad"><div class="section-head"><h3>Sample — Staff AI Engineer</h3><span class="pill good">opened 2×</span></div>
-    <div class="row"><div class="avatar" style="background:linear-gradient(140deg,#E8A317,#F5C24B);color:#3a2a00">DK</div><div style="flex:1"><b style="font-size:14px">Dana Kohl</b><div class="tiny muted">Head of AI Recruiting · verified backchannel</div></div><span class="pill teal">direct email</span></div>
-    <div style="margin-top:18px" class="tl">
-      <div class="tl-item on"><div class="tt">Email sent from your Gmail</div><div class="td">Tue 9:04 AM · tailored to the req</div></div>
-      <div class="tl-item on"><div class="tt">Resume opened</div><div class="td">Tue 9:41 AM · 2 min read</div></div>
-      <div class="tl-item on"><div class="tt">Project link clicked</div><div class="td">Tue 9:43 AM · your RAG demo</div></div>
-      <div class="tl-item act"><div class="tt">Opened again + forwarded</div><div class="td">Wed 8:12 AM · shared internally</div></div>
-      <div class="tl-item"><div class="tt">Awaiting reply</div><div class="td">Nudge suggested in 1 day</div></div></div></div>
-    <div class="card pad"><h3 style="margin-bottom:12px">To make this real</h3>
-      ${[["Gmail OAuth (send + read scopes)","good"],["Tracking pixel + link redirect service","teal"],["Find decision-maker (Apollo/Hunter API)","warn"],["Deliverability guardrails (avoid spam)","crit"]].map(([t,c])=>`<div class="row"><span class="pill ${c}" style="width:8px;height:8px;padding:0;border-radius:50%"></span><span style="flex:1;font-size:13.5px">${t}</span></div>`).join("")}
-      <div class="demo-note" style="margin-top:14px">All outreach data above is illustrative</div></div></div>`;
+V.outreach=()=>{
+  const connected=S.me&&S.me.email;
+  return `<div class="page-head"><div class="eyebrow">Backchannel · Email</div><h1>Recruiter Outreach</h1>
+  <p>Compose a tailored recruiter email and open it in your mail app, pre-filled and ready to send. ${connected?`Sending as <b>${esc(S.me.email)}</b>.`:`<b>Connect your email in <a href="#" onclick="go('profile');return false">Profile</a> first.</b>`}</p></div>
+  <div class="two">
+    <div class="card pad">
+      <h3 style="margin-bottom:12px">Compose outreach</h3>
+      <div class="field"><label>Recruiter / hiring manager name</label><input type="text" id="o-name" value="Hiring Team"></div>
+      <div class="field"><label>Recruiter email</label><input type="text" id="o-to" placeholder="name@company.com"></div>
+      <div class="field"><label>Role</label><select id="o-role" onchange="document.getElementById('o-customwrap').style.display=this.value==='__custom'?'block':'none'">${S.pipeline.map(p=>`<option value="${p.id}">${esc(p.role)} — ${esc(p.co)}</option>`).join("")}<option value="__custom">Custom…</option></select></div>
+      <div class="field" id="o-customwrap" style="display:${S.pipeline.length?'none':'block'}"><label>Custom role / company</label><input type="text" id="o-custom" placeholder="Staff AI Engineer at Acme"></div>
+      <button class="btn pri" onclick="composeOutreach()">Generate &amp; preview</button>
+    </div>
+    <div class="card pad" id="o-out"><div class="empty">${icon('<path d="M4 4h16v12H8l-4 4z"/>')}<div>Fill the form and generate — your email preview appears here, then opens in your mail app.</div></div></div>
+  </div>
+  <div class="card pad" style="margin-top:16px"><h3 style="margin-bottom:10px">Send-from-your-account + open tracking — next tier</h3>
+    <p class="tiny muted" style="margin:0 0 12px">Opening a pre-filled draft works with zero setup. To send automatically from your account and see opens/clicks, you'd add:</p>
+    ${[["Gmail / Graph OAuth (send scope)","real send without leaving the app","good"],["Tracking pixel + link-redirect service","know when it's opened / clicked","teal"],["Decision-maker lookup (Apollo / Hunter)","find the right recruiter","warn"],["Deliverability guardrails","stay out of spam","crit"]].map(([a,b,c])=>`<div class="row"><span class="pill ${c}" style="width:8px;height:8px;padding:0;border-radius:50%"></span><div style="flex:1"><b style="font-size:13.5px">${a}</b><div class="tiny muted">${b}</div></div></div>`).join("")}
+  </div>`;
+};
+window.composeOutreach=()=>{
+  const roleSel=$("#o-role").value;let role="the role",co="";
+  if(roleSel==="__custom"||!roleSel){role=($("#o-custom")&&$("#o-custom").value)||"the role";co="";}
+  else{const p=S.pipeline.find(x=>x.id===roleSel);if(p){role=p.role;co=p.co;}}
+  const name=$("#o-name").value||"Hiring Team";
+  const to=$("#o-to").value.trim();
+  const m=S.me||{};const me=m.name||"me";
+  const subject=`${role}${co?` @ ${co}`:""} — ${me}`;
+  const sig=[m.links&&m.links.linkedin?"LinkedIn: "+m.links.linkedin:"",m.links&&m.links.portfolio?"Portfolio: "+m.links.portfolio:""].filter(Boolean).join("\n");
+  const body=`Hi ${name},\n\nI came across the ${role}${co?` role at ${co}`:""} and it lines up closely with what I do${m.headline?` (${m.headline})`:""}. I've attached my résumé — I'd welcome a quick conversation about how I could contribute.\n\n${sig?sig+"\n\n":""}Thank you for your time,\n${me}${m.phone?"\n"+m.phone:""}${m.email?"\n"+m.email:""}`;
+  $("#o-out").innerHTML=`<div class="section-head"><h3>Preview</h3><span class="pill teal">${to?esc(to):'no recipient yet'}</span></div>
+    <div class="tiny muted" style="margin-bottom:6px"><b>Subject:</b> ${esc(subject)}</div>
+    <div style="white-space:pre-wrap;font-size:13.5px;line-height:1.6;background:var(--surface-2);border-radius:10px;padding:14px;max-height:300px;overflow:auto">${esc(body)}</div>
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+      <button class="btn pri sm" onclick='openMail(${JSON.stringify(to)},${JSON.stringify(subject)},${JSON.stringify(body)})'>Open in email app →</button>
+      <button class="btn sm" onclick='(navigator.clipboard&&navigator.clipboard.writeText(${JSON.stringify(body)}));toast("Copied","Email body copied to clipboard")'>Copy body</button>
+    </div>`;
+  toast("Draft ready","Review, then open it in your mail app");
+};
 
 const QBANK=[
   ["Behavioral","Tell me about a time you shipped an ML system under a tight deadline.","Situation → deadline & stakes. Task → what you owned. Action → trade-offs to move fast. Result → the metric."],
@@ -493,6 +544,69 @@ window.dover=e=>{e.preventDefault();e.currentTarget.classList.add('over');};
 window.dleave=e=>e.currentTarget.classList.remove('over');
 window.ddrop=e=>{e.preventDefault();e.currentTarget.classList.remove('over');const stage=e.currentTarget.dataset.stage;const p=S.pipeline.find(x=>x.id===dragId);if(p&&p.stage!==stage){p.stage=stage;save();render('tracker');toast("Moved to "+STAGE_LABEL[stage],p.co+" · "+p.role);}};
 
+V.profile=()=>{
+  const m=S.me||{};const L=m.links||{};const E=m.empTypes||{};
+  return `<div class="page-head"><div class="eyebrow">You</div><h1>Your Profile</h1>
+    <p>One source of truth — it drives your match scores, cover letters, outreach signature, and (next) application auto-fill. Saved locally in your browser.</p></div>
+  <div class="two">
+    <div class="card pad">
+      <h3 style="margin-bottom:14px">Identity</h3>
+      <div class="field"><label>Full name</label><input type="text" id="p-name" value="${esc(m.name||"")}"></div>
+      <div class="field"><label>Headline / title</label><input type="text" id="p-headline" value="${esc(m.headline||"")}"></div>
+      <div class="two" style="gap:12px">
+        <div class="field"><label>Email</label><input type="text" id="p-email" value="${esc(m.email||"")}" placeholder="you@email.com"></div>
+        <div class="field"><label>Phone</label><input type="text" id="p-phone" value="${esc(m.phone||"")}" placeholder="optional"></div>
+      </div>
+      <div class="field"><label>Location</label><input type="text" id="p-loc" value="${esc(m.location||"")}"></div>
+      <div class="field"><label>LinkedIn</label><input type="text" id="p-linkedin" value="${esc(L.linkedin||"")}" placeholder="https://linkedin.com/in/…"></div>
+      <div class="two" style="gap:12px">
+        <div class="field"><label>GitHub</label><input type="text" id="p-github" value="${esc(L.github||"")}"></div>
+        <div class="field"><label>Portfolio</label><input type="text" id="p-portfolio" value="${esc(L.portfolio||"")}"></div>
+      </div>
+    </div>
+    <div class="grid">
+      <div class="card pad">
+        <h3 style="margin-bottom:14px">Preferences</h3>
+        <div class="field"><label>Work authorization</label><input type="text" id="p-auth" value="${esc(m.workAuth||"")}"></div>
+        <div class="field"><label>Open to employment types</label>
+          <div class="chips">
+            <label class="chip ${E.w2ft?'on':''}"><input type="checkbox" id="p-w2ft" ${E.w2ft?'checked':''} style="display:none" onchange="this.parentElement.classList.toggle('on',this.checked)">W2 · Full-time</label>
+            <label class="chip ${E.w2c?'on':''}"><input type="checkbox" id="p-w2c" ${E.w2c?'checked':''} style="display:none" onchange="this.parentElement.classList.toggle('on',this.checked)">W2 · Contract</label>
+            <label class="chip ${E.c2c?'on':''}"><input type="checkbox" id="p-c2c" ${E.c2c?'checked':''} style="display:none" onchange="this.parentElement.classList.toggle('on',this.checked)">C2C</label>
+          </div>
+        </div>
+        <div class="two" style="gap:12px">
+          <div class="field"><label>Preferred locations</label><input type="text" id="p-locsPref" value="${esc(m.locsPref||"")}"></div>
+          <div class="field"><label>Min salary ($k)</label><input type="text" id="p-minsal" value="${esc(m.minSalary||"")}"></div>
+        </div>
+        <div class="field" style="margin-bottom:0"><label>Target roles / keywords <span class="tiny muted">(boosts Radar match)</span></label><input type="text" id="p-targets" value="${esc(m.targets||"")}"></div>
+      </div>
+      <div class="card pad">
+        <div class="section-head"><h3>Email connector</h3>${m.email?`<span class="pill good">connected · ${esc(m.provider||'mailto')}</span>`:`<span class="pill warn">not set</span>`}</div>
+        <p class="tiny muted" style="margin:0 0 12px">Uses the email above to compose and open outreach drafts in your mail app — works with zero setup. Real auto-send + open tracking is the next tier (see Recruiter Outreach).</p>
+        <div class="field"><label>Mail app</label><select id="p-provider">${["Gmail","Outlook / Microsoft","Apple Mail","Other / default"].map(o=>`<option ${m.provider===o?'selected':''}>${o}</option>`).join("")}</select></div>
+        <button class="btn sm" onclick="testMail()">Send myself a test draft</button>
+      </div>
+    </div>
+  </div>
+  <div class="card pad" style="margin-top:16px">
+    <div class="section-head"><h3>Résumé text</h3><span class="tiny muted">used for the ATS scan + match ranking</span></div>
+    <textarea id="p-resume" style="min-height:120px">${esc(S.profile||"")}</textarea>
+  </div>
+  <div style="display:flex;gap:8px;margin-top:16px"><button class="btn pri" onclick="saveMe()">Save profile</button><button class="btn" onclick="go('radar')">See my matches</button></div>`;
+};
+window.saveMe=()=>{
+  const g=id=>{const el=document.getElementById(id);return el?el.value:"";};
+  const c=id=>{const el=document.getElementById(id);return el?el.checked:false;};
+  S.me={name:g('p-name'),headline:g('p-headline'),email:g('p-email').trim(),phone:g('p-phone'),location:g('p-loc'),
+    links:{linkedin:g('p-linkedin'),github:g('p-github'),portfolio:g('p-portfolio')},
+    workAuth:g('p-auth'),empTypes:{w2ft:c('p-w2ft'),w2c:c('p-w2c'),c2c:c('p-c2c')},
+    locsPref:g('p-locsPref'),minSalary:g('p-minsal'),targets:g('p-targets'),provider:g('p-provider')};
+  S.profile=g('p-resume');
+  save();rankJobs();updateAvatar();toast("Profile saved","Match scores + outreach updated to your profile.","accent");render('profile');
+};
+window.testMail=()=>{const el=document.getElementById('p-email');const to=el?el.value.trim():"";if(!to){toast("Add your email first","Enter your email above, then test.","crit");return;}openMail(to,"Crack It — test draft","This is a test draft composed by Crack It. If it opened in your mail app, your email connector works.");};
+
 V.features=()=>{
   const F=[
     ["Live Job Radar","REAL — official Greenhouse & Ashby APIs, ranked to your profile.",'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/>',"WORKING NOW"],
@@ -514,7 +628,7 @@ V.features=()=>{
 
 /* ================= ROUTER ================= */
 let CUR="dashboard";
-function render(v){CUR=v;document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('on',n.dataset.v===v));$("#view").innerHTML=(V[v]||V.dashboard)();window.scrollTo(0,0);}
+function render(v){CUR=v;document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('on',n.dataset.v===v));$("#view").innerHTML=(V[v]||V.dashboard)();updateAvatar();window.scrollTo(0,0);}
 window.go=v=>{render(v);closeNav();};
 function paintBadges(){const b=document.querySelector('.nav-item[data-v="tracker"] .badge');if(b)b.textContent=S.pipeline.length;}
 
